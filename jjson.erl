@@ -83,63 +83,76 @@ jdeserialize_tokens(['[' | Rest]) -> jdeserialize_list([], Rest).
 deserialize(S) ->
   {Object, []} = jdeserialize(S),
   Object.
-jdeserialize(S) -> jdeserialize_tokens(jtokenize(S)).
-jconsumeCharacterToken([C | Rest]) -> {list_to_atom([C]), Rest}.
-jconsumeString(String, [$\" | Rest]) -> {lists:reverse(String), Rest};
-jconsumeString(String, [C | Rest]) -> jconsumeString([C | String], Rest).
-is_digit(C) -> lists:member(C, "1234567890.").
+jdeserialize_tokens_top([]) -> {ok, []};
+jdeserialize_tokens_top(Tokens) -> jdeserialize_tokens(Tokens).
+jdeserialize(S) -> jdeserialize_tokens_top(jtokenize(S)).
+is_hex(D) -> lists:member(D, "0123456789ABCDEFabcdef").
+jconsumeString(String, <<$":8, Rest/binary>>) ->
+  {lists:reverse(String), Rest};
+jconsumeString(String, <<"\\\"", Rest/binary>>) ->
+  jconsumeString([$\" | String], Rest);
+jconsumeString(String, <<"\\\\", Rest/binary>>) ->
+  jconsumeString([$\\ | String], Rest);
+jconsumeString(String, <<"\\/", Rest/binary>>) ->
+  jconsumeString([$/ | String], Rest);
+jconsumeString(String, <<"\\b", Rest/binary>>) ->
+  jconsumeString([$\b | String], Rest);
+jconsumeString(String, <<"\\f", Rest/binary>>) ->
+  jconsumeString([$\f | String], Rest);
+jconsumeString(String, <<"\\n", Rest/binary>>) ->
+  jconsumeString([$\n | String], Rest);
+jconsumeString(String, <<"\\r", Rest/binary>>) ->
+  jconsumeString([$\r | String], Rest);
+jconsumeString(String, <<"\\t", Rest/binary>>) ->
+  jconsumeString([$\t | String], Rest);
+jconsumeString(String, <<"\\u", Ds:32, Rest/binary>>) ->
+  case lists:all(fun (D) -> is_hex(D) end,
+                 binary_to_list(<<Ds:32>>)) of
+    true ->
+      CodePoint = binary_to_integer(<<Ds:32>>, 16),
+      Utf8 = binary_to_list(<<CodePoint:32>>),
+      RevUtf8 = lists:reverse(Utf8),
+      jconsumeString(lists:append([RevUtf8, String]), Rest)
+  end;
+jconsumeString(String, <<C:8, Rest/binary>>) ->
+  jconsumeString([C | String], Rest).
 list_to_number(String) ->
   case lists:member($., String) of
     true -> list_to_float(String);
     false -> list_to_integer(String)
   end.
-jconsumeNumber(Number, []) ->
-  {list_to_number(lists:reverse(Number)), []};
-jconsumeNumber(Number, [C | Rest]) ->
+is_digit(C) -> lists:member(C, "1234567890.").
+jconsumeNumber(Number, <<>>) ->
+  {list_to_number(lists:reverse(Number)), <<>>};
+jconsumeNumber(Number, <<C/utf8, Rest/binary>>) ->
   case is_digit(C) of
     true -> jconsumeNumber([C | Number], Rest);
-    false -> {list_to_number(lists:reverse(Number)), [C | Rest]}
+    false -> 
+      {list_to_number(lists:reverse(Number)), <<C/utf8, Rest/binary>>}
   end.
-starts_with([], _) -> true;
-starts_with([P | Rest], [P | SRest]) -> starts_with(Rest, SRest);
-starts_with(_, _) -> false.
-jconsumeToken(String) ->
-  [C | Rest] = String,
-  case starts_with("true", String) of
-    true -> {'true', string:sub_string(String, 5)};
-    false ->
-      case starts_with("false", String) of
-        true -> {'false', string:sub_string(String, 6)};
-        false ->
-          case starts_with("null", String) of
-            true -> {'null', string:sub_string(String, 5)};
-            false ->
-              case lists:member(C, "{:,}[]") of
-                true -> jconsumeCharacterToken(String);
-                false ->
-                  case lists:member(C, "-1234567890.") of
-                    true -> jconsumeNumber("", String);
-                    false ->
-                      case C of
-                        $\" -> jconsumeString("", Rest);
-                        $\ -> jconsumeToken(Rest);
-                        $\t -> jconsumeToken(Rest);
-                        $\n -> jconsumeToken(Rest)
-                      end
-                  end
-              end
-          end
-      end
+jconsumeToken(<<"true", Rest/binary>>) -> {true, Rest};
+jconsumeToken(<<"false", Rest/binary>>) -> {false, Rest};
+jconsumeToken(<<"null", Rest/binary>>) -> {null, Rest};
+jconsumeToken(<<"{", Rest/binary>>) -> {'{', Rest};
+jconsumeToken(<<":", Rest/binary>>) -> {':', Rest};
+jconsumeToken(<<",", Rest/binary>>) -> {',', Rest};
+jconsumeToken(<<"}", Rest/binary>>) -> {'}', Rest};
+jconsumeToken(<<"[", Rest/binary>>) -> {'[', Rest};
+jconsumeToken(<<"]", Rest/binary>>) -> {']', Rest};
+jconsumeToken(<<"\"", Rest/binary>>) -> jconsumeString("", Rest);
+jconsumeToken(<<Digit/utf8, Rest/binary>>) ->
+  case is_digit(Digit) of
+    true -> jconsumeNumber("", <<Digit/utf8, Rest/binary>>)
   end.
-jtokenize(Tokens, "") -> lists:reverse(Tokens);
+skip_whitespace(<<" ", Rest/binary>>) -> skip_whitespace(Rest);
+skip_whitespace(<<"\t", Rest/binary>>) -> skip_whitespace(Rest);
+skip_whitespace(<<"\n", Rest/binary>>) -> skip_whitespace(Rest);
+skip_whitespace(<<Given/binary>>) -> Given.
+jtokenize(Tokens, <<>>) -> lists:reverse(Tokens);
 jtokenize(Tokens, String) ->
-  {Token, Rest} = jconsumeToken(String),
-  % io:format("~p", [{Token, Rest}]),
-  case Rest of
-    [] -> lists:reverse([Token | Tokens]);
-    _ -> jtokenize([Token | Tokens], Rest)
-  end.
-jtokenize(String) -> jtokenize([], String).
+  {Token, Rest} = jconsumeToken(skip_whitespace(String)),
+  jtokenize([Token | Tokens], skip_whitespace(Rest)).
+jtokenize(String) -> jtokenize([], list_to_binary(String)).
 init(_Input) -> {ok, _Input}.
 serialize(Object) -> lists:flatten(jserialize(Object)).
 handle_call({serialize, Object}, _From, State) -> 
