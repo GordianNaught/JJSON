@@ -122,14 +122,53 @@ list_to_number(String) ->
     false -> list_to_integer(String)
   end.
 is_digit(C) -> lists:member(C, "1234567890.").
-jconsumeNumber(Number, <<>>) ->
-  {list_to_number(lists:reverse(Number)), <<>>};
-jconsumeNumber(Number, <<C/utf8, Rest/binary>>) ->
-  case is_digit(C) of
-    true -> jconsumeNumber([C | Number], Rest);
-    false -> 
-      {list_to_number(lists:reverse(Number)), <<C/utf8, Rest/binary>>}
+jconsumeDigits(Chars, <<>>) -> {lists:reverse(Chars), <<>>};
+jconsumeDigits(Chars, <<Digit/utf8, Rest/binary>>) ->
+  case is_digit(Digit) of
+    true -> jconsumeDigits([Digit | Chars], Rest);
+    false -> {lists:reverse(Chars), <<Digit/utf8, Rest/binary>>}
   end.
+jconsumeDigits(Binary) -> jconsumeDigits([], Binary).
+jconsumeMaybeDecimal(Number, <<".", Rest/binary>>) ->
+  {Decimal, AfterDecimal} = jconsumeDigits(Rest),
+  {Number#{decimal := lists:append([".", Decimal])}, AfterDecimal};
+jconsumeMaybeDecimal(Number, Binary) -> {Number, Binary}.
+jconsumeMaybeExponentSign(Number, <<"-", Rest/binary>>) ->
+  {Number#{exponent_sign := "-"}, Rest};
+jconsumeMaybeExponentSign(Number, Binary) -> {Number, Binary}.
+jconsumeMaybeExponent(Number, <<"e", Rest/binary>>) ->
+  {Number1, AfterSign} = jconsumeMaybeExponentSign(Number, Rest),
+  {Exponent, AfterExponent} = jconsumeDigits(AfterSign),
+  {Number1#{exponent := Exponent}, AfterExponent};
+jconsumeMaybeExponent(Number, Binary) -> {Number, Binary}.
+pow(_, 0) -> 1;
+pow(N, 1) -> N;
+pow(N, P) when P < 0 -> 1 / pow(N, -P);
+pow(N, P) ->
+  case P rem 2 of
+    0 -> X = pow(N, P div 2), X * X;
+    1 -> N * pow(N, P - 1)
+  end.
+number_state_to_string(#{number_sign := Sign,
+                         number := NumberText,
+                         decimal := Decimal,
+                         exponent_sign := ExponentSign,
+                         exponent := ExponentText}) ->
+   Number = list_to_number(lists:append([Sign, NumberText, Decimal])),
+   Exponent = list_to_integer(lists:append([ExponentSign, ExponentText])),
+   Number * pow(10, Exponent).
+numberStartState() ->
+  #{number_sign => "",
+    number => "0",
+    decimal => "",
+    exponent_sign => "",
+    exponent => "0"}.
+jconsumeAfterSign(State, Rest) ->
+  {Number, AfterNumber}  = jconsumeDigits(Rest),
+  State1 = State#{number := Number},
+  {State2, AfterDecimal} = jconsumeMaybeDecimal(State1, AfterNumber),
+  {State3, AfterExponent} = jconsumeMaybeExponent(State2, AfterDecimal),
+  {number_state_to_string(State3), AfterExponent}.
 jconsumeToken(<<"true", Rest/binary>>) -> {true, Rest};
 jconsumeToken(<<"false", Rest/binary>>) -> {false, Rest};
 jconsumeToken(<<"null", Rest/binary>>) -> {null, Rest};
@@ -140,9 +179,12 @@ jconsumeToken(<<"}", Rest/binary>>) -> {'}', Rest};
 jconsumeToken(<<"[", Rest/binary>>) -> {'[', Rest};
 jconsumeToken(<<"]", Rest/binary>>) -> {']', Rest};
 jconsumeToken(<<"\"", Rest/binary>>) -> jconsumeString("", Rest);
+jconsumeToken(<<"-", AfterSign/binary>>) ->
+  jconsumeAfterSign((numberStartState())#{sign := "-"}, AfterSign);
 jconsumeToken(<<Digit/utf8, Rest/binary>>) ->
   case is_digit(Digit) of
-    true -> jconsumeNumber("", <<Digit/utf8, Rest/binary>>)
+    true -> jconsumeAfterSign(numberStartState(),
+                              <<Digit/utf8, Rest/binary>>)
   end.
 skip_whitespace(<<" ", Rest/binary>>) -> skip_whitespace(Rest);
 skip_whitespace(<<"\t", Rest/binary>>) -> skip_whitespace(Rest);
