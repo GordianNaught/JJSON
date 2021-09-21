@@ -180,7 +180,7 @@ jconsumeToken(<<"[", Rest/binary>>) -> {'[', Rest};
 jconsumeToken(<<"]", Rest/binary>>) -> {']', Rest};
 jconsumeToken(<<"\"", Rest/binary>>) -> jconsumeString("", Rest);
 jconsumeToken(<<"-", AfterSign/binary>>) ->
-  jconsumeAfterSign((numberStartState())#{sign := "-"}, AfterSign);
+  jconsumeAfterSign((numberStartState())#{number_sign := "-"}, AfterSign);
 jconsumeToken(<<Digit/utf8, Rest/binary>>) ->
   case is_digit(Digit) of
     true -> jconsumeAfterSign(numberStartState(),
