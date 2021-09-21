@@ -8,7 +8,7 @@ This library has only seen use in my personal projects; use it at your own risk.
 
 It is not complete.
 
-In particular, unicode escape sequences with `\\u` are not functioning yet.
+In particular, unicode escape sequences with `\u` are not functioning yet.
 
 - [x] integers
 - [x] floats
