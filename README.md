@@ -1,9 +1,13 @@
 # JJSON
 
 This is a simple Erlang library for reading and writing JSON.
+
 It aims to be small and simple, something that wouldn't be heavy to read the source for.
+
 This library has only seen use in my personal projects; use it at your own risk.
+
 It is not complete.
+
 In particular, unicode escape sequences with `\\u` are not functioning yet.
 
 - [x] integers
